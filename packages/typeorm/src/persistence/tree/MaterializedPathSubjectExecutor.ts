@@ -26,26 +26,33 @@ export class MaterializedPathSubjectExecutor {
      * @param subject
      */
     async insert(subject: Subject): Promise<void> {
-        let parent = subject.metadata.treeParentRelation!.getEntityValue(
+        const parent = subject.metadata.treeParentRelation!.getEntityValue(
             subject.entity!,
         ) // if entity was attached via parent
+        let parentId = subject.metadata.getEntityIdMap(parent)
         if (!parent && subject.parentSubject?.entity)
             // if entity was attached via children
-            parent =
-                subject.parentSubject.insertedValueSet ??
-                subject.parentSubject.entity
-
-        const parentId = subject.metadata.getEntityIdMap(parent)
+            // the inserted value set holds database values, getEntityPath
+            // expects entity values like the identifier holds
+            parentId =
+                subject.parentSubject.identifier ??
+                subject.metadata.getEntityIdMap(subject.parentSubject.entity)
 
         let parentPath: string = ""
         if (parentId) {
             parentPath = await this.getEntityPath(subject, parentId)
         }
 
+        // build the path from entity values, as update() does
+        const insertedEntity = OrmUtils.mergeDeep(
+            {},
+            subject.insertedValueSet,
+            subject.generatedMap,
+        )
         const insertedEntityId = subject.metadata
             .treeParentRelation!.joinColumns.map((joinColumn) => {
                 return joinColumn.referencedColumn!.getEntityValue(
-                    subject.insertedValueSet!,
+                    insertedEntity,
                 )
             })
             .join("_")

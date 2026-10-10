@@ -64,11 +64,12 @@ export class ReturningResultsEntityUpdator {
                     const result = Array.isArray(updateResult.raw)
                         ? updateResult.raw[entityIndex]
                         : updateResult.raw
-                    const returningColumns =
+                    const returningColumns = this.hydrateGeneratedMap(
                         this.queryRunner.dataSource.driver.createGeneratedMap(
                             metadata,
                             result,
-                        )
+                        ),
+                    )
                     if (returningColumns) {
                         this.queryRunner.manager.merge(
                             metadata.target as any,
@@ -205,6 +206,11 @@ export class ReturningResultsEntityUpdator {
                 )
             }
 
+            // values returned by the driver and locally generated values are
+            // raw database values, hydrate them before they reach the entity.
+            // values re-selected below are hydrated by the select itself.
+            this.hydrateGeneratedMap(generatedMap)
+
             this.queryRunner.manager.merge(
                 metadata.target as any,
                 entity,
@@ -281,6 +287,37 @@ export class ReturningResultsEntityUpdator {
             insertResult.identifiers.push(entityId)
             insertResult.generatedMaps.push(generatedMaps[entityIndex])
         })
+    }
+
+    /**
+     * Converts raw database values of a generated map into entity values,
+     * e.g. applies column transformers.
+     *
+     * @param generatedMap map of raw values returned or generated on insertion or update
+     * @returns the same map with hydrated values
+     */
+    protected hydrateGeneratedMap<T extends ObjectLiteral | undefined>(
+        generatedMap: T,
+    ): T {
+        if (!generatedMap) return generatedMap
+
+        const driver = this.queryRunner.dataSource.driver
+
+        for (const column of this.expressionMap.mainAlias!.metadata.columns) {
+            // virtual relation columns are stored as a plain value under the
+            // relation property (e.g. `{ user: 1 }`), not as a related entity
+            if (column.isVirtual && column.relationMetadata) continue
+
+            const value = column.getEntityValue(generatedMap)
+            if (value === undefined) continue
+
+            column.setEntityValue(
+                generatedMap,
+                driver.prepareHydratedValue(value, column),
+            )
+        }
+
+        return generatedMap
     }
 
     /**

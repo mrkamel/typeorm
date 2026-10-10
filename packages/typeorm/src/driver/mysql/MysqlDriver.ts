@@ -1015,7 +1015,6 @@ export class MysqlDriver implements Driver {
                         map,
                         column.createValueMap(insertResult[key]),
                     )
-                    // OrmUtils.mergeDeep(map, column.createValueMap(this.prepareHydratedValue(insertResult[key], column))); // TODO: probably should be like there, but fails on enums, fix later
                 }
                 return map
             }, {} as ObjectLiteral)

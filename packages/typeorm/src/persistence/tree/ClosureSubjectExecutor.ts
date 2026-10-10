@@ -27,17 +27,20 @@ export class ClosureSubjectExecutor {
      */
     async insert(subject: Subject): Promise<void> {
         // create values to be inserted into the closure junction
+        // the identifier holds hydrated values, the junction columns need the
+        // database values kept in the inserted value set
+        const entityIdMap = subject.metadata.getEntityIdMap(
+            subject.insertedValueSet ?? subject.entity!,
+        )
         const closureJunctionInsertMap: ObjectLiteral = {}
         subject.metadata.closureJunctionTable.ancestorColumns.forEach(
             (column) => {
-                closureJunctionInsertMap[column.databaseName] =
-                    subject.identifier
+                closureJunctionInsertMap[column.databaseName] = entityIdMap
             },
         )
         subject.metadata.closureJunctionTable.descendantColumns.forEach(
             (column) => {
-                closureJunctionInsertMap[column.databaseName] =
-                    subject.identifier
+                closureJunctionInsertMap[column.databaseName] = entityIdMap
             },
         )
 

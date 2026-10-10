@@ -850,9 +850,7 @@ export class OracleDriver implements Driver {
             if (column) {
                 OrmUtils.mergeDeep(
                     map,
-                    column.createValueMap(
-                        this.prepareHydratedValue(insertResult[key], column),
-                    ),
+                    column.createValueMap(insertResult[key]),
                 )
             }
             return map

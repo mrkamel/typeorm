@@ -16,6 +16,7 @@ import { OrmUtils } from "../util/OrmUtils"
 import type { UpdateResult } from "../query-builder/result/UpdateResult"
 import { ObjectUtils } from "../util/ObjectUtils"
 import { InstanceChecker } from "../util/InstanceChecker"
+import { ApplyValueTransformers } from "../util/ApplyValueTransformers"
 
 /**
  * Executes all database operations (inserts, updated, deletes) that must be executed
@@ -426,6 +427,10 @@ export class SubjectExecutor {
                     subject.generatedMap = insertResult.generatedMaps[index]
                     subject.insertedValueSet = bulkInsertMaps[index]
                 })
+
+                subjects.forEach((subject) =>
+                    this.hydrateMongoGeneratedMap(subject),
+                )
             } else {
                 // here we execute our insertion query
                 // we need to enable entity updation because we DO need to have updated insertedMap
@@ -445,6 +450,7 @@ export class SubjectExecutor {
                         subject.identifier = insertResult.identifiers[index]
                         subject.generatedMap = insertResult.generatedMaps[index]
                         subject.insertedValueSet = bulkInsertMaps[index]
+                        this.restoreGeneratedDatabaseValues(subject)
                     })
                 }
 
@@ -472,6 +478,7 @@ export class SubjectExecutor {
                                 subject.identifier = insertResult.identifiers[0]
                                 subject.generatedMap =
                                     insertResult.generatedMaps[0]
+                                this.restoreGeneratedDatabaseValues(subject)
                             })
 
                         // for tree tables we execute additional queries
@@ -489,27 +496,6 @@ export class SubjectExecutor {
                     }
                 }
             }
-
-            subjects.forEach((subject) => {
-                if (subject.generatedMap) {
-                    subject.metadata.columns.forEach((column) => {
-                        const value = column.getEntityValue(
-                            subject.generatedMap!,
-                        )
-                        if (value !== undefined && value !== null) {
-                            const preparedValue =
-                                this.queryRunner.dataSource.driver.prepareHydratedValue(
-                                    value,
-                                    column,
-                                )
-                            column.setEntityValue(
-                                subject.generatedMap!,
-                                preparedValue,
-                            )
-                        }
-                    })
-                }
-            })
         }
     }
 
@@ -597,20 +583,6 @@ export class SubjectExecutor {
                 const updateResult = await updateQueryBuilder.execute()
                 const updateGeneratedMap = updateResult.generatedMaps[0]
                 if (updateGeneratedMap) {
-                    subject.metadata.columns.forEach((column) => {
-                        const value = column.getEntityValue(updateGeneratedMap!)
-                        if (value !== undefined && value !== null) {
-                            const preparedValue =
-                                this.queryRunner.dataSource.driver.prepareHydratedValue(
-                                    value,
-                                    column,
-                                )
-                            column.setEntityValue(
-                                updateGeneratedMap!,
-                                preparedValue,
-                            )
-                        }
-                    })
                     subject.generatedMap ??= {}
                     Object.assign(subject.generatedMap, updateGeneratedMap)
                 }
@@ -709,6 +681,58 @@ export class SubjectExecutor {
         }
     }
 
+    /**
+     * Hydrates the generated map of a subject persisted by mongodb.
+     * Query builders hydrate generated maps by themselves, the mongodb entity
+     * manager does not.
+     *
+     * @param subject subject persisted by mongodb
+     */
+    private hydrateMongoGeneratedMap(subject: Subject): void {
+        if (!subject.generatedMap) return
+
+        for (const column of subject.metadata.columns) {
+            const value = column.getEntityValue(subject.generatedMap)
+            if (value === undefined || value === null) continue
+
+            column.setEntityValue(
+                subject.generatedMap,
+                this.queryRunner.dataSource.driver.prepareHydratedValue(
+                    value,
+                    column,
+                ),
+            )
+        }
+    }
+
+    /**
+     * Cascaded subjects build their foreign keys from the value set of an
+     * inserted subject, and foreign keys are persisted without the transformer
+     * of the referenced column. Keeps the values generated by the database in
+     * their database form in the value set, the generated map keeps them
+     * hydrated for the entity. The database form is rebuilt with the
+     * transformer's `to`, so it relies on `to` reversing `from`. Only primary
+     * and generated columns are restored, other columns are not referenced.
+     *
+     * @param subject inserted subject
+     */
+    private restoreGeneratedDatabaseValues(subject: Subject): void {
+        if (!subject.generatedMap || !subject.insertedValueSet) return
+
+        for (const column of subject.metadata.columns) {
+            if (!column.transformer) continue
+            if (!column.isPrimary && !column.isGenerated) continue
+
+            const value = column.getEntityValue(subject.generatedMap)
+            if (value === undefined) continue
+
+            column.setEntityValue(
+                subject.insertedValueSet,
+                ApplyValueTransformers.transformTo(column.transformer, value),
+            )
+        }
+    }
+
     private cloneMongoSubjectEntity(subject: Subject): ObjectLiteral {
         const target: ObjectLiteral = {}
 
@@ -793,21 +817,10 @@ export class SubjectExecutor {
             }
 
             subject.generatedMap = updateResult.generatedMaps[0]
-            if (subject.generatedMap) {
-                subject.metadata.columns.forEach((column) => {
-                    const value = column.getEntityValue(subject.generatedMap!)
-                    if (value !== undefined && value !== null) {
-                        const preparedValue =
-                            this.queryRunner.dataSource.driver.prepareHydratedValue(
-                                value,
-                                column,
-                            )
-                        column.setEntityValue(
-                            subject.generatedMap!,
-                            preparedValue,
-                        )
-                    }
-                })
+            if (
+                InstanceChecker.isMongoEntityManager(this.queryRunner.manager)
+            ) {
+                this.hydrateMongoGeneratedMap(subject)
             }
 
             // experiments, remove probably, need to implement tree tables children removal
@@ -904,21 +917,10 @@ export class SubjectExecutor {
             }
 
             subject.generatedMap = updateResult.generatedMaps[0]
-            if (subject.generatedMap) {
-                subject.metadata.columns.forEach((column) => {
-                    const value = column.getEntityValue(subject.generatedMap!)
-                    if (value !== undefined && value !== null) {
-                        const preparedValue =
-                            this.queryRunner.dataSource.driver.prepareHydratedValue(
-                                value,
-                                column,
-                            )
-                        column.setEntityValue(
-                            subject.generatedMap!,
-                            preparedValue,
-                        )
-                    }
-                })
+            if (
+                InstanceChecker.isMongoEntityManager(this.queryRunner.manager)
+            ) {
+                this.hydrateMongoGeneratedMap(subject)
             }
 
             // experiments, remove probably, need to implement tree tables children removal

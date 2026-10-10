@@ -258,6 +258,7 @@ export interface Driver {
 
     /**
      * Creates generated map of values generated or returned by database after INSERT query.
+     * Values are raw database values, they are hydrated by the caller.
      */
     createGeneratedMap(
         metadata: EntityMetadata,
